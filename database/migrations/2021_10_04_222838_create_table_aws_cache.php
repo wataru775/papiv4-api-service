@@ -14,12 +14,13 @@ class CreateTableAwsCache extends Migration
     public function up()
     {
         Schema::create('aws_cache', function (Blueprint $table) {
-            $table->string('keyword');
-            $table->integer('page');
+            $table->string('uri');
+            $table->string('payload');
+            $table->string('target');
             $table->string('data',1024);
             $table->timestamps();
 
-            $table->primary(['keyword', 'page']);
+            $table->primary(['uri', 'payload','target']);
         });
     }
 

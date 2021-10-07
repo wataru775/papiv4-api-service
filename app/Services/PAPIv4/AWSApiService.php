@@ -18,8 +18,9 @@ class AWSApiService
     /* Copyright 2018 Amazon.com, Inc. or its affiliates. All Rights Reserved. */
     /* Licensed under the Apache License, Version 2.0. */
 
-    private $cachingService;
+    const LOG_PREFIX = '[AWSApiService]';
 
+    private $cachingService;
     public function __construct(CachingService $cachingService){
         $this->cachingService = $cachingService;
     }
@@ -34,7 +35,7 @@ class AWSApiService
      */
     function getItems(string $asin): ?string
     {
-        Log::debug('AWSApiService@getitems try asin: ' . $asin);
+        Log::debug(self::LOG_PREFIX . '@getitems try asin: ' . $asin);
         $partnerTag = env('AWS_SHOP_ID');
 
         $payload="{"
@@ -56,13 +57,13 @@ class AWSApiService
 
         // 実行結果を評価 (エラーかどうかの判断)
         if(property_exists($json,'Errors')){
-            Log::debug('AWSApiService@searchBarcodeItems result: ' . 'NoResults');
+            Log::debug(self::LOG_PREFIX .'@searchBarcodeItems result: ' . 'NoResults');
             return null;
         }
 
         // 結果の引き継ぎ
         foreach ($json->ItemsResult->Items as $item){
-            Log::debug('AWSApiService@getitems result: '
+            Log::debug(self::LOG_PREFIX .'@getitems result: '
                 . 'Items [ '
                 . 'ASIN : ' . $item->ASIN
                 . ' title : ' . $item->ItemInfo->Title->DisplayValue
@@ -82,7 +83,7 @@ class AWSApiService
      */
     function searchItems(string $keyword): ?array
     {
-        Log::debug('AWSApiService@searchItems try $keyword: ' . $keyword);
+        Log::debug(self::LOG_PREFIX . '@searchItems try $keyword: ' . $keyword);
         $partnerTag = env('AWS_SHOP_ID');
 
         $items = [];
@@ -90,61 +91,51 @@ class AWSApiService
         $target = 'com.amazon.paapi5.v1.ProductAdvertisingAPIv1.SearchItems';
 
         for($i = 1 ; $i <= 10 ; $i++) {
-            // キャッシュをチェック
-            $cache = $this->cachingService->get($keyword,$i);
-            if($cache !== null){
-                Log::debug(' keyword ' . $keyword . ' : ' . $i . ' page in cache. ');
-                $json = $cache;
-            }else {
-                $payload = "{"
-                    . " \"Keywords\": \"" . $keyword . "\","
-                    . " \"PartnerTag\": \"" . $partnerTag . "\","
-                    . " \"PartnerType\": \"Associates\","
-                    . " \"SearchIndex\": \"Books\","
-                    . " \"ItemPage\": " . $i . ","
-                    . " \"Marketplace\": \"www.amazon.co.jp\""
-                    . "}";
 
-                Log::debug('AWSApiService@searchItems connect $payload: ' . $payload);
+            $payload = "{"
+                . " \"Keywords\": \"" . $keyword . "\","
+                . " \"PartnerTag\": \"" . $partnerTag . "\","
+                . " \"PartnerType\": \"Associates\","
+                . " \"SearchIndex\": \"Books\","
+                . " \"ItemPage\": " . $i . ","
+                . " \"Marketplace\": \"www.amazon.co.jp\""
+                . "}";
 
-                try {
-                    // AWSに接続します
-                    $json = $this->connectAwsPAPIv4($uriPath, $payload, $target);
-                } catch (Exception $e) {
-                    if (count($items) === 0) {
-                        throw $e;
-                    }
+            Log::debug(self::LOG_PREFIX . '@searchItems connect $payload: ' . $payload);
+
+            $json = [];
+            try {
+                // AWSに接続します
+                $json = $this->connectAwsPAPIv4($uriPath, $payload, $target);
+            } catch (Exception $e) {
+                if (count($items) === 0) {
+                    throw $e;
                 }
+            }
 
-                // 実行結果を評価 (エラーかどうかの判断)
-                if (property_exists($json, 'Errors')) {
-                    if (count($items) !== 0) {
-                        // 結果が含まれている場合はループを終了
-                        break;
-                    }
-                    Log::debug('AWSApiService@searchItems result: ' . 'NoResults');
-                    return null;
+            // 実行結果を評価 (エラーかどうかの判断)
+            if (property_exists($json, 'Errors')) {
+                if (count($items) !== 0) {
+                    // 結果が含まれている場合はループを終了
+                    break;
                 }
-
-                // 結果をキャッシング
-                Log::debug(' keyword = ' . $keyword . ' : ' . $i . ' page in store cache. ' . count($json->SearchResult->Items) . ' items.');
-                $this->cachingService->set($keyword,$i,$json);
-
+                Log::debug(self::LOG_PREFIX . '@searchItems result: ' . 'NoResults');
+                return null;
             }
             // 結果の引き継ぎ
             foreach ($json->SearchResult->Items as $item) {
                 $makeItem = $this->makeItem($item);
                 $items[] = $makeItem;
-                Log::debug(' ASIN: ' . $makeItem->asin . ' TITLE: ' . $makeItem->title);
+                Log::debug(self::LOG_PREFIX . ' ASIN: ' . $makeItem->asin . ' TITLE: ' . $makeItem->title);
             }
 
             // 1リクエストが10件以内の場合は処理を終了
             if (count($items) < 10) {
                 break;
             }
-        }
 
-        Log::debug('AWSApiService@searchItems result: count ' . count($items));
+        }
+        Log::debug(self::LOG_PREFIX . '@searchItems result: count ' . count($items));
 
         return $items;
     }
@@ -205,6 +196,20 @@ class AWSApiService
      */
     private function connectAwsPAPIv4(string $uriPath, string $payload, string $target)
     {
+        Log::debug(self::LOG_PREFIX . " target : " . $target);
+        // キャッシュをチェック
+        Log::debug(self::LOG_PREFIX . "[cache] mode " . ((env('ACTIVE_AWS_CACHE') === true )?'true':'false'));
+
+        // キャッシュ機能の有無チェック
+        if(env('ACTIVE_AWS_CACHE')) {
+            // キャッシュをチェック
+            $cache =  $this->cachingService->get($uriPath, $payload,$target);
+            if($cache){
+                Log::debug(self::LOG_PREFIX . "[cache] connect... result in cache ");
+                return $cache;
+            }
+        }
+
         $awsv4 = $this->makeAwsv4( $uriPath , $payload , $target);
         $headers = $awsv4->getHeaders();
         $headerString = "";
@@ -221,14 +226,14 @@ class AWSApiService
         $stream = stream_context_create ( $params );
 
         $url = 'https://' . self::AWS_HOST . $uriPath;
-        Log::debug(' aws papiv4 connecting ... url : ' . $url . ' payload : ' . $payload);
+        Log::debug(self::LOG_PREFIX . ' connecting ... url : ' . $url . ' payload : ' . $payload);
         $fp = @fopen ($url , 'rb', false, $stream );
 
         if (! $fp) {
             // retry ...
-            Log::debug(' aws papiv4 connecting retry ... url : ' . $url . ' payload : ' . $payload);
+            Log::debug(self::LOG_PREFIX . ' connecting retry ... url : ' . $url . ' payload : ' . $payload);
             sleep(1);
-            
+
             $fp = @fopen ($url , 'rb', false, $stream );
 
             if (! $fp) {
@@ -242,12 +247,29 @@ class AWSApiService
 
         $json = json_decode($response);
 
-        // getItemsとsearchItemsの結果により表示パラメタが違う
-        if(property_exists($json, 'ItemsResult')){
-            Log::debug(' aws papiv4 connected. ' . count( $json->ItemsResult->Items ) . ' items.');
-        }elseif(property_exists($json, 'SearchResult')){
-            Log::debug(' aws papiv4 connected. ' . count( $json->SearchResult->Items ) . ' items.');
+        // 実行結果を評価 (エラーかどうかの判断)
+        if (!property_exists($json, 'Errors')) {
+
+            $items = [];
+            // getItemsとsearchItemsの結果により表示パラメタが違う
+            if (property_exists($json, 'ItemsResult')) {
+                $items = $json->ItemsResult->Items;
+            } elseif (property_exists($json, 'SearchResult')) {
+                $items = $json->SearchResult->Items;
+            } else {
+                throw new Exception('不明な結果');
+            }
+            // 結果をキャッシング
+            // キャッシュ機能の有無チェック
+            if (env('ACTIVE_AWS_CACHE')) {
+                // キャッシュを保存
+                $this->cachingService->set($uriPath, $payload, $target, $json);
+            }
+            Log::debug(self::LOG_PREFIX . " connected. " . count( $items ) . ' items.');
+        }else{
+            Log::debug(self::LOG_PREFIX . " connected. = ERROR = ");
         }
+
         return $json;
     }
 }

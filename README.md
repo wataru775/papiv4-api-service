@@ -27,6 +27,12 @@ https://affiliate.amazon.co.jp/assoc_credentials/home
 |  getItems  |  アイテムを取得します  |
 |  searchItems  |  キーワードからアイテムを取得します  |
 
+### 環境設定
+
+| 環境キー | 解説 | 値 |
+| ---- | ---- | ---- |
+| ACTIVE_AWS_CACHE | AWSリクエストの結果をDBに保存する | true (default:false) |
+
 ### 参照
 
 - https://webservices.amazon.com/paapi5/documentation/
